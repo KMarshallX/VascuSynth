@@ -116,6 +116,7 @@ vector<string> * readFileLines(const char * filename){
 #include "OxygenationMap.h"
 #include "SupplyMap.h"
 #include "TreeDrawer.h"
+#include "Export.h"
 #include "VascularTree.h"
 
 
@@ -639,34 +640,64 @@ void printTreeStructure(VascularTree * vt, const char * filePath){
 
 /**
  * VascuSynth: takes a series of parameter files, image names and (optionally) noise files
- * and generates a vascular structure based on the parameters.  The 3d volume is saved
- * as a series of 2D png slices (lossless).  Information about the vascular structure is saved as
- * a GXL file that can be visualized using software such as GraphViz.
+ * and generates a vascular structure based on the parameters.
  *
- * Arguments: paramFile.txt imageNames.txt voxelWidth noiseFiles.txt
- * noiseFiles.txt is an optional parameter.
+ * Arguments: [--original-export] paramList.txt imageNames.txt imageVoxelWidth [noiseFile ...]
  *
- * For each imageName/parameterFile/noiseFile, a folder is generated with the name specified
- * which will contain the 2D slices and the GXL file.
+ * For each imageName/parameterFile a folder is generated with the name specified.
+ *
+ * Default export (ground truth for skeletonisation):
+ *   original_image/imageNNN.png, noise_image_K/imageNNN.png (2D slices, lossless)
+ *   centerline_graph.graphml (centreline graph, SkelHub-compatible)
+ *   skeleton.nii.gz, vessel_mask.nii.gz, vessel_image.nii.gz, noise_image_K.nii.gz
+ *
+ * --original-export: the original outputs only, i.e. the PNG slices and the
+ * GXL file tree_structure.xml.
  */
+static void printUsage() {
+	cout << "Usage: VascuSynth [--original-export] <paramList> <nameList> <imageVoxelWidth> [noiseFile ...]" << endl;
+	cout << "  default            PNG slices + centerline_graph.graphml + skeleton/vessel_mask/vessel_image NIfTI" << endl;
+	cout << "  --original-export  PNG slices + tree_structure.xml (GXL) only, as in the original VascuSynth" << endl;
+}
+
 int main(int argc, char** argv){
 
-	if (argc < 4) {
+	//separate the --original-export flag (accepted anywhere) from the positional arguments
+	bool originalExport = false;
+	vector<string> args;
+	for (int i = 1; i < argc; i++) {
+		string arg = argv[i];
+		if (arg == "--original-export") {
+			originalExport = true;
+		} else if (arg == "-h" || arg == "--help") {
+			printUsage();
+			return 0;
+		} else if (arg.size() > 1 && arg[0] == '-' && arg[1] == '-') {
+			cout << "An error has occured: unknown option " << arg << endl;
+			printUsage();
+			return 1;
+		} else {
+			args.push_back(arg);
+		}
+	}
+
+	if (args.size() < 3) {
 		//not enough parameters specified
 		cout << "An error has occured: incorrect number of arguments" << endl;
-		cout << "Usage: VascuSynth [paramFile] [imageNameFile] [voxelWidth] [noiseFile ...]" << endl;
+		printUsage();
 		return 1;
 	}
 	
     try {
     
         //read the param files and image name files
-        vector<string> *paramFiles = readFileLines(argv[1]);
-        vector<string> *imageNameFiles = readFileLines(argv[2]);
+        vector<string> *paramFiles = readFileLines(args[0].c_str());
+        vector<string> *imageNameFiles = readFileLines(args[1].c_str());
 
-        //voxel widths
-        string voxelWidth = argv[3];
-        string *noiseFiles = new string[argc-4];
+        //voxel width of the output image
+        string voxelWidth = args[2];
+        vector<string> noiseFiles(args.begin() + 3, args.end());
+        int numNoise = (int) noiseFiles.size();
         
         int paramFilesSize = (int) paramFiles->size();
 
@@ -679,12 +710,6 @@ int main(int argc, char** argv){
             
             string paramFile = paramFiles->at(m);
             string rootDirectory = imageNameFiles->at(m);
-
-            for(int i = 4; i < argc; i++) {
-                noiseFiles[i-4] = argv[i];
-            }
-            
-            int numNoise = argc-4;
             
             cout << "Reading parameters and building the tree..." << endl;
             
@@ -701,16 +726,17 @@ int main(int argc, char** argv){
             //create the directory for the output
             rootDirectory = "./"+rootDirectory;
             mmkdir(rootDirectory.c_str());
-            
-            //create the GXL file
-            string treeStructure = rootDirectory+"/tree_structure.xml";
-            printTreeStructure(vt, treeStructure.c_str());
-            
             cout << "The directory for the image has been created..." << endl;
-            cout << "Information about the vascular structure has been saved in the gxl file tree_structure.xml..." << endl;
+            
+            if (originalExport) {
+                //create the GXL file
+                string treeStructure = rootDirectory+"/tree_structure.xml";
+                printTreeStructure(vt, treeStructure.c_str());
+                cout << "Information about the vascular structure has been saved in the gxl file tree_structure.xml..." << endl;
+            }
 
             double corner1[] = {0,0,0};
-            double corner2[] = {vt->oxMap->dim[0], vt->oxMap->dim[1], vt->oxMap->dim[2]};
+            double corner2[] = {(double) vt->oxMap->dim[0], (double) vt->oxMap->dim[1], (double) vt->oxMap->dim[2]};
             TreeDrawer * td = drawTree(vt, corner1, corner2, atof(voxelWidth.c_str()));
                 
             //create the subdirectory for the images
@@ -723,7 +749,18 @@ int main(int argc, char** argv){
             
             cout << "The volumetric image has been saved..." << endl;
 
-            char *buff = new char[20];
+            if (!originalExport) {
+                //ground-truth export: centreline graph and voxel volumes on the image grid
+                GroundTruth gt = buildGroundTruth(vt, td);
+                writeCenterlineGraphML(vt, td, gt, rootDirectory + "/centerline_graph.graphml", paramFile);
+                writeSkeletonNifti(td, gt, rootDirectory + "/skeleton.nii.gz");
+                writeVesselMaskNifti(td, gt, rootDirectory + "/vessel_mask.nii.gz");
+                writeNiftiVolume(td->image, td->dim, td->imageVoxelWidth, rootDirectory + "/vessel_image.nii.gz");
+                cout << "Skeleton cleaned: " << gt.rawVoxels << " drawn voxels -> " << gt.cleanVoxels
+                     << " (" << gt.tunnelsOpened << " spurious loops removed)..." << endl;
+                cout << "Ground truth saved: centerline_graph.graphml, skeleton.nii.gz, vessel_mask.nii.gz,"
+                     << " vessel_image.nii.gz..." << endl;
+            }
             
             if (numNoise > 0) {
                 cout << "The images are being degraded by noise..." << endl;
@@ -737,10 +774,15 @@ int main(int argc, char** argv){
                 
                 string noiseImage = rootDirectory+"/noise_image_"+itoa(i, 10);
                 mmkdir(noiseImage.c_str());
+
+                if (!originalExport) {
+                    writeNiftiVolume(td_c->image, td_c->dim, td_c->imageVoxelWidth, noiseImage + ".nii.gz");
+                }
                 
                 noiseImage = noiseImage+"/image";
                 drawImage(td_c, noiseImage.c_str());
-            
+
+                delete td_c;
             }
             
             if (numNoise > 0) {
@@ -748,7 +790,6 @@ int main(int argc, char** argv){
             }
 
             //clean up
-            delete buff;
             delete td;
             delete vt;
         }

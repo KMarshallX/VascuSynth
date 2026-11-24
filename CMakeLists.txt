@@ -6,7 +6,7 @@ project(VascuSynth CXX)
 find_package(ITK REQUIRED)
 include(${ITK_USE_FILE})
 
-add_executable(VascuSynth VascuSynth.cpp SupplyMap.cpp OxygenationMap.cpp NodeTable.cpp VascularTree.cpp TreeDrawer.cpp)
+add_executable(VascuSynth VascuSynth.cpp SupplyMap.cpp OxygenationMap.cpp NodeTable.cpp VascularTree.cpp TreeDrawer.cpp Export.cpp)
 target_link_libraries(VascuSynth ${ITK_LIBRARIES})
 
 install(TARGETS VascuSynth RUNTIME DESTINATION bin)
