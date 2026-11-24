@@ -88,10 +88,18 @@ vector<string> * readFileLines(const char * filename){
 		
 	if(oFile.is_open()){
 	
-		while(!oFile.eof()){
-			getline(oFile, line);
-			string copy = line;
-			lines->push_back(copy);
+		//getline in the loop condition avoids a spurious empty last line
+		//when the file ends with a newline
+		while(getline(oFile, line)){
+			//strip Windows (CRLF) line endings so names and values are clean
+			if (!line.empty() && line[line.length() - 1] == '\r') {
+				line.erase(line.length() - 1);
+			}
+			//skip blank lines so a trailing newline is not read as an entry
+			if (line.find_first_not_of(" \t") == string::npos) {
+				continue;
+			}
+			lines->push_back(line);
 		}
 		
 		oFile.close();
@@ -374,7 +382,7 @@ TreeDrawer *drawTree(VascularTree * vt, double * corner1, double * corner2, doub
 
 /**
  * draws the tree from the TreeDrawer into a volumetric 3D
- * image as a series of 2D png slices
+ * image as a series of 2D png slices (lossless)
  */
 void drawImage(TreeDrawer * td, const char* rootName){
 	typedef unsigned char PixelType;
@@ -428,7 +436,7 @@ void drawImage(TreeDrawer * td, const char* rootName){
 
 	std::string format = rootName;
 	format += "%03d";
-	format += ".jpg";
+	format += ".png";	//lossless, so the clean image stays an exact ground truth
 	nameGenerator->SetSeriesFormat( format.c_str() );
 
 	const unsigned int firstSlice = start[2];
@@ -477,7 +485,7 @@ void applyNoise(TreeDrawer *td, const char* noiseFile){
 	if(mapFile.is_open()){		
 		while(!mapFile.eof()){
 			getline(mapFile, line);
-			char* tok = new char[line.size()];
+			char* tok = new char[line.size()+1];
 			strcpy(tok, line.c_str());
 			
 			if(line.length() == 0)
@@ -632,7 +640,7 @@ void printTreeStructure(VascularTree * vt, const char * filePath){
 /**
  * VascuSynth: takes a series of parameter files, image names and (optionally) noise files
  * and generates a vascular structure based on the parameters.  The 3d volume is saved
- * as a series of 2D png slices.  Information about the vascular structure is saved as
+ * as a series of 2D png slices (lossless).  Information about the vascular structure is saved as
  * a GXL file that can be visualized using software such as GraphViz.
  *
  * Arguments: paramFile.txt imageNames.txt voxelWidth noiseFiles.txt
@@ -646,8 +654,8 @@ int main(int argc, char** argv){
 	if (argc < 4) {
 		//not enough parameters specified
 		cout << "An error has occured: incorrect number of arguments" << endl;
-		cout << "Usage: VascuSynth [paramFile] [imageNameFile] [voxelWidth]" << endl;
-		return 0;
+		cout << "Usage: VascuSynth [paramFile] [imageNameFile] [voxelWidth] [noiseFile ...]" << endl;
+		return 1;
 	}
 	
     try {
@@ -661,7 +669,11 @@ int main(int argc, char** argv){
         string *noiseFiles = new string[argc-4];
         
         int paramFilesSize = (int) paramFiles->size();
-        
+
+        if (imageNameFiles->size() < paramFiles->size()) {
+            throw string("Fewer image names than parameter files; each parameter file needs an image name");
+        }
+
         //go through each param file and build tree an spit it out
         for(int m = 0; m < paramFilesSize; m++){
             
@@ -744,6 +756,11 @@ int main(int argc, char** argv){
     } catch (string str) {
         cout << "ERROR: " << str << endl;
         cout << "Exiting VascuSynth" << endl;
+        return 1;
+    } catch (const char * str) {
+        cout << "ERROR: " << str << endl;
+        cout << "Exiting VascuSynth" << endl;
+        return 1;
     }
 
 	return 0;

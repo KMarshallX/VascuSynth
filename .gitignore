@@ -40,3 +40,13 @@ CMakeTmp/
 *.exe
 *.out
 *.app
+
+# build output
+build/
+
+# generated trees and personal run folders
+runs/
+my_trees/
+*/original_image/
+*/noise_image_*/
+tree_structure.xml
